@@ -1109,6 +1109,12 @@ def activity_report():
     })
 
 
-# run code in debug mode
-if __name__== "__main__":
-    app.run(host='0.0.0.0',port=5000,use_reloader=True,debug=True)
+# Vercel serverless deployment - no direct server execution
+# The app is imported and executed through Vercel's runtime
+if __name__ == "__main__":
+    # This is only for local development
+    try:
+        app.run(host='0.0.0.0', port=5000, use_reloader=False, debug=False)
+    except Exception as e:
+        print(f"Error starting app: {e}")
+

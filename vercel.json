@@ -1,16 +1,20 @@
 {
-    "name": "IOT",
+    "name": "Smart IoT Farming Kit",
     "version": 2,
+    "buildCommand": "pip install -r requirements.txt",
     "builds": [
       {
-        "src": "app.py",
-        "use": "@vercel/python"
+        "src": "api/index.py",
+        "use": "@vercel/python@2.1.2"
       }
     ],
     "routes": [
       {
         "src": "/(.*)",
-        "dest": "app.py"
+        "dest": "api/index.py"
       }
-    ]
+    ],
+    "env": {
+      "PYTHONPATH": "/var/task"
+    }
   }
