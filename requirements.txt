@@ -1,0 +1,7 @@
+Flask
+Flask-Cors
+Flask-PyMongo
+pymongo
+requests
+datetime
+Pillow
