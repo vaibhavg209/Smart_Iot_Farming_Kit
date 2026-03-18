@@ -39,6 +39,25 @@ if not secret_key:
 app.secret_key = secret_key
 
 
+# ==================== ACTIVITY LOGGING FUNCTION ====================
+def log_activity(username, activity_type, activity_description, ip_address="", status="Success"):
+    """
+    Log user activities for audit trail
+    activity_type: 'login', 'logout', 'register', 'data_update', 'crop_added', 'yield_recorded', etc.
+    """
+    try:
+        activity_log = {
+            'username': username,
+            'activity_type': activity_type,
+            'activity_description': activity_description,
+            'timestamp': datetime.datetime.now(),
+            'ip_address': ip_address,
+            'status': status
+        }
+        mongo.db.activity_logs.insert_one(activity_log)
+    except Exception as e:
+        print(f"Error logging activity: {e}")
+
 
 def generate_otp():
    
@@ -130,6 +149,10 @@ def signup():
 
             
         })
+        
+        # Log the user registration
+        log_activity(username, 'register', f'New user {username} registered with email {email}', 
+                    ip_address=request.remote_addr, status='Success')
 
         # Redirect to the login page or any other desired page
         return redirect('/login')
@@ -155,7 +178,14 @@ def login():
             session['user_id'] = str(user['_id'])
             # session.permanent = True
             username = user["username"]
+            
+            # Log the login activity
+            log_activity(username, 'login', f'User {username} logged in successfully', 
+                        ip_address=request.remote_addr, status='Success')
+            
             if user["privlidge"] == "admin":
+                log_activity(username, 'admin_login', f'Admin {username} logged in', 
+                           ip_address=request.remote_addr, status='Success')
                 return redirect(url_for('admin'))
             # Store the user's information in the session
             
@@ -163,6 +193,9 @@ def login():
             # Redirect to the home page or any other desired page
             return redirect(url_for('user_dashboard'))
         else:
+            # Log failed login attempt
+            log_activity(username, 'login', f'Failed login attempt for user {username}', 
+                        ip_address=request.remote_addr, status='Failed')
             return "Invalid username or password."
     
     # Render the login form
@@ -170,6 +203,13 @@ def login():
 
 @app.route('/logout')
 def logout():
+    # Log logout activity
+    if 'user_id' in session:
+        user = mongo.db.users.find_one({'_id': ObjectId(session['user_id'])})
+        if user:
+            log_activity(user['username'], 'logout', f'User {user["username"]} logged out', 
+                        ip_address=request.remote_addr, status='Success')
+    
     # Clear the user's session
     session.clear()
 
@@ -960,6 +1000,113 @@ def area():
         return redirect('/login')  # Redirect to login page if user is not logged in
 
 
+# ==================== ACTIVITY LOGS ROUTES ====================
+
+@app.route('/activity-logs', methods=['GET', 'POST'])
+def activity_logs():
+    """View activity logs with search and filter options (Admin only)"""
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    user = mongo.db.users.find_one({'_id': ObjectId(session['user_id'])})
+    if not user or user.get('privlidge') != 'admin':
+        return "Access Denied. Only admins can view activity logs."
+    
+    # Get filter parameters
+    search_username = request.args.get('search_username', '')
+    activity_type = request.args.get('activity_type', '')
+    search_status = request.args.get('search_status', '')
+    
+    # Build filter query
+    filter_query = {}
+    if search_username:
+        filter_query['username'] = {'$regex': search_username, '$options': 'i'}
+    if activity_type:
+        filter_query['activity_type'] = activity_type
+    if search_status:
+        filter_query['status'] = search_status
+    
+    # Get all logs with filters
+    logs = list(mongo.db.activity_logs.find(filter_query).sort('timestamp', -1).limit(10000))
+    
+    # Convert ObjectId to string for template
+    for log in logs:
+        log['_id'] = str(log['_id'])
+        log['timestamp'] = log['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Get unique activity types for filter dropdown
+    activity_types = mongo.db.activity_logs.distinct('activity_type')
+    
+    return render_template('activity_logs.html', logs=logs, activity_types=activity_types,
+                         search_username=search_username, activity_type=activity_type,
+                         search_status=search_status)
+
+
+@app.route('/export-logs', methods=['GET'])
+def export_logs():
+    """Export activity logs to CSV (Admin only)"""
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    user = mongo.db.users.find_one({'_id': ObjectId(session['user_id'])})
+    if not user or user.get('privlidge') != 'admin':
+        return "Access Denied"
+    
+    # Get all logs
+    logs = list(mongo.db.activity_logs.find().sort('timestamp', -1))
+    
+    # Create CSV content
+    csv_content = "Username,Activity Type,Activity Description,Timestamp,IP Address,Status\n"
+    for log in logs:
+        timestamp = log['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+        csv_content += f"{log['username']},{log['activity_type']},{log['activity_description']},{timestamp},{log.get('ip_address', 'N/A')},{log['status']}\n"
+    
+    # Return CSV file
+    response = Response(csv_content, mimetype='text/csv')
+    response.headers['Content-Disposition'] = f'attachment; filename=activity_logs_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+    
+    return response
+
+
+@app.route('/activity-report', methods=['GET'])
+def activity_report():
+    """Get activity report/statistics (Admin only)"""
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    user = mongo.db.users.find_one({'_id': ObjectId(session['user_id'])})
+    if not user or user.get('privlidge') != 'admin':
+        return jsonify({'error': 'Access Denied'}), 403
+    
+    # Get statistics
+    total_logs = mongo.db.activity_logs.count_documents({})
+    total_logins = mongo.db.activity_logs.count_documents({'activity_type': 'login'})
+    total_registrations = mongo.db.activity_logs.count_documents({'activity_type': 'register'})
+    failed_logins = mongo.db.activity_logs.count_documents({'activity_type': 'login', 'status': 'Failed'})
+    
+    # Get top active users
+    top_users_pipeline = [
+        {'$group': {'_id': '$username', 'count': {'$sum': 1}}},
+        {'$sort': {'count': -1}},
+        {'$limit': 10}
+    ]
+    top_users = list(mongo.db.activity_logs.aggregate(top_users_pipeline))
+    
+    # Get activity type distribution
+    activity_distribution_pipeline = [
+        {'$group': {'_id': '$activity_type', 'count': {'$sum': 1}}},
+        {'$sort': {'count': -1}}
+    ]
+    activity_distribution = list(mongo.db.activity_logs.aggregate(activity_distribution_pipeline))
+    
+    return jsonify({
+        'total_logs': total_logs,
+        'total_logins': total_logins,
+        'total_registrations': total_registrations,
+        'failed_logins': failed_logins,
+        'top_active_users': top_users,
+        'activity_distribution': activity_distribution
+    })
 
 
 # run code in debug mode
