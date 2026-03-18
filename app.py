@@ -16,15 +16,26 @@ from PIL import Image
 from io import BytesIO
 # initialize first flask
 app = Flask(__name__, static_folder='static',template_folder="templates")
-# app.config['MONGO_URI'] = 'mongodb://localhost:27017/Project'
-#   # Replace with your MongoDB connection URI
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
 
-app.config['MONGO_URI'] = "mongodb+srv://coe211153csecoe:AZmtosHqknPrbcI2@cluster0.mhxrfuv.mongodb.net/Project?retryWrites=true&w=majority"
-mongo = PyMongo(app)
+# Use environment variable for MongoDB URI, with fallback for development
+mongo_uri = os.getenv('MONGO_URI')
+if not mongo_uri:
+    mongo_uri = "mongodb+srv://coe211153csecoe:AZmtosHqknPrbcI2@cluster0.mhxrfuv.mongodb.net/Project?retryWrites=true&w=majority"
+
+app.config['MONGO_URI'] = mongo_uri
+
+try:
+    mongo = PyMongo(app)
+except Exception as e:
+    print(f"MongoDB Connection Error: {e}")
 
 CORS(app)
-secret_key = os.urandom(24)
+
+# Use environment variable for SECRET_KEY, with fallback for development
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    secret_key = "dev-secret-key-change-in-production"
 app.secret_key = secret_key
 
 
@@ -197,7 +208,7 @@ def forget_pass():
         user_collection.update_one({'email': email}, {'$set': {'otp': otp}})
         
         msg = f"Your OTP is: {otp}"
-        send_email("namitjain2111@gmail.com", "etboiesuglrnwgxt", email, "OTP", msg)
+        send_email("vaibhavguptaofficial9@gmail.com", "etboiesuglrnwgxt", email, "OTP", msg)
         
         # Store email in session
         session['email'] = email
